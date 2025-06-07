@@ -1,0 +1,396 @@
+### 🧾 **Advanced License Agreement for Bus Transit Network Design (BTDN) System**  
+**Version 2.1 - Effective Date: 2023-10-15**  
+
+---
+
+### 🔍 **Definitions**  
+1. **"Software"**: All source code (including but not limited to `MandlEnv`, `db_models`), database schemas, configuration files, Docker artifacts, and documentation contained within this repository.
+2. **"Models"**: All machine learning and optimization artifacts, including reinforcement learning agents (PPO, SAC, Transformer), evolutionary solvers (NSGA-II), hybrid or derived implementations, and pre-trained weights.
+3. **"Constraints"**: All technical and operational rules, including but not limited to: coverage threshold (≥0.7), emission limit (≤1000), reward weight boundaries (±50% of reference), and route/action validity.
+4. **"Derivative Work"**: Any adaptation, fork, extension, port, or re-distribution of the Software or Models, including repackaged or re-hosted implementations.
+5. **"Commercial Use"**: Any use, deployment, or integration that generates revenue, supports commercial services, or is used in production (including, but not limited to, city transit optimization or SaaS).
+
+---
+
+### 📜 **License Grant**  
+#### **1. Non-Commercial Use**  
+- Free for:
+  - Academic or scientific research
+  - Internal testing and prototyping
+  - Non-profit or public sector applications
+- Code must include:
+  ```python
+  # Source: https://github.com/rafatoel/BTDN
+  # License: BTDN License 2.1
+  ```
+
+#### **2. Commercial License**  
+- Requires formal, written permission from the project owner (rafatoel).  
+- Obligations for commercial users:
+  - Maintain all automated constraint validation
+  - Preserve reward weight boundaries as defined herein
+  - Implement comprehensive audit logging (`user_activities`, `system_metrics`)
+  - Track and log all model versions (`model_versions`)
+  - Submit monthly compliance and audit reports to [raafatoel@gmail.com]
+
+#### **3. Redistribution License**  
+- Derivative works must:
+  - Retain the full original license header in all source files
+  - Maintain a comprehensive `CHANGELOG.md` documenting all modifications
+  - Preserve all database-level and code-level constraints and validation logic
+  - Guarantee that reward weight tolerances and constraint checks remain active and effective
+
+---
+
+### 🧮 **Technical Compliance Enforcement**  
+#### **1. Reward Weight Boundaries**  
+Reward weights must remain within ±50% of these canonical values:
+```python
+# src/environments/mandl_env.py
+self.reward_weights = {
+    'coverage': 0.3,          # ±50% (0.15–0.45)
+    'route_length': -0.1,     # ±50% (-0.05 to -0.15)
+    'travel_time': -0.2,      # ±50% (-0.1 to -0.3)
+    'transfers': -0.15,       # ±50% (-0.075 to -0.225)
+    'demand_served': 0.2,     # ±50% (0.1–0.3)
+    'emissions': -0.1,        # ±50% (-0.05 to -0.15)
+}
+```
+
+#### **2. Constraint Validation**  
+```sql
+-- PostgreSQL constraints
+ALTER TABLE datasets
+ADD CONSTRAINT coverage_threshold CHECK (coverage >= 0.7);
+
+ALTER TABLE optimization_jobs
+ADD CONSTRAINT emission_limit CHECK (emissions <= 1000);
+```
+
+#### **3. Route and Action Validation**  
+```python
+# src/environments/mandl_env.py
+def _is_valid_action(self, action: int) -> bool:
+    if action in self.visited_stops:
+        return False
+    if not self.current_route:
+        return False
+    last_stop = self.current_route[-1]
+    return action in [n for n, _ in self.edges[last_stop]]
+```
+
+---
+
+### 🔒 **Security & Authentication**  
+All deployments and forks must:
+- Implement JWT-based authentication:
+  ```python
+  # src/auth/routes.py
+  def create_access_token(data: dict):
+      return jwt.encode(data, os.getenv("JWT_SECRET_KEY"), algorithm=os.getenv("JWT_ALGORITHM"))
+  ```
+- Enforce password strength via DB constraints:
+  ```sql
+  ALTER TABLE users
+  ADD CONSTRAINT password_strength CHECK (length(hashed_password) >= 60);
+  ```
+- Log all user actions:
+  ```python
+  # src/core/middleware.py
+  class AuthMiddleware:
+      def __call__(self, scope, receive, send):
+          activity = UserActivity(
+              user_id=payload["user_id"],
+              action="route_optimization"
+          )
+  ```
+
+---
+
+### 🗃️ **Database Model Requirements**  
+#### **1. ORM Relationships**  
+```python
+# src/backend/database/db_models.py
+class Dataset(Base, TimestampMixin):
+    __tablename__ = 'datasets'
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100))
+    user_id = Column(Integer, ForeignKey('users.id'))
+    uploader = relationship("User", back_populates="datasets")
+```
+
+#### **2. Constraint Triggers**  
+```sql
+-- PostgreSQL triggers
+CREATE FUNCTION check_coverage()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.coverage < 0.7 THEN
+        RAISE EXCEPTION 'Coverage threshold violated (%)', NEW.coverage;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER coverage_threshold
+BEFORE INSERT OR UPDATE ON datasets
+FOR EACH ROW EXECUTE FUNCTION check_coverage();
+```
+
+---
+
+### 🧪 **Validation & Testing**  
+#### **1. Build-Time Checks**  
+```bash
+# Verify constraint thresholds
+docker exec btnd-worker python -c "from environments.mandl_env import MandlEnv; env = MandlEnv(); assert env.config.get('coverage_threshold', 0.7) == 0.7, 'Coverage threshold modified'"
+```
+
+#### **2. Runtime Validation**  
+```bash
+# Test route validation
+curl -X POST "https://btdn.onrender.com/routes/optimize" \
+  -H "Content-Type: application/json" \
+  -d '{"max_route_length": 15}'
+# Should return 400 Bad Request if constraint violated
+```
+
+---
+
+### 📦 **Environment Configuration**  
+```yaml
+# configs/environment/mandl.yaml
+environment:
+  reward_weights:
+    coverage: 0.3          # ±50% allowed
+    route_length: -0.1     # ±50% allowed
+    travel_time: -0.2      # ±50% allowed
+    transfers: -0.15       # ±50% allowed
+    demand_served: 0.2     # ±50% allowed
+    emissions: -0.1        # ±50% allowed
+  coverage_threshold: 0.7
+  emission_limit: 1000
+```
+
+**Validation Logic Example:**  
+```python
+# src/utils/feature_encoder.py
+def _validate_route(route: List[int]):
+    coverage_ratio = len(set(route)) / total_stops
+    if coverage_ratio < coverage_threshold:
+        raise ConstraintViolation("Coverage threshold violated")
+```
+
+---
+
+### ☁️ **Deployment & Hosting**  
+#### **1. Supported Free Hosting Platforms**
+- **Render.com**: PostgreSQL, API hosting
+- **PythonAnywhere**: Python web app hosting
+- **Supabase**: PostgreSQL and authentication
+
+**Dockerfile Compliance:**
+```dockerfile
+RUN python -c "from environments.mandl_env import MandlEnv; env = MandlEnv(); print(env.reward_weights)"
+```
+
+#### **2. Web UI Integration**
+```html
+<!-- index.html -->
+<form id="route-form">
+  <input type="number" name="max_route_length" value="5">
+  <input type="number" name="coverage_threshold" value="0.7">
+  <button type="submit">Optimize Network</button>
+</form>
+<script>
+document.getElementById('route-form').addEventListener('submit', async (e) => {
+  const response = await fetch("https://btdn.onrender.com/routes/optimize", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      max_route_length: 5,
+      coverage_threshold: 0.7
+    })
+  });
+});
+</script>
+```
+
+---
+
+### 📊 **Compliance & Audit Reporting**  
+#### **1. System Metrics**
+```sql
+SELECT metric_type, value, unit
+FROM system_metrics
+WHERE metric_type IN ('active_jobs', 'error_rate');
+```
+
+#### **2. Usage Tracking**
+```python
+# src/core/middleware.py
+class AuthMiddleware:
+    def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            token = scope.get("token")
+            if token:
+                payload = jwt.decode(token, os.getenv("JWT_SECRET"))
+                scope["user"] = payload.get("sub")
+        await self.app(scope, receive, send)
+```
+
+---
+
+### 🚫 **Automatic Termination Conditions**  
+License is immediately voided if:
+- Any reward weight exceeds ±50% of reference values
+- Coverage threshold < 0.7 or emission limit > 1000
+- Any security, authentication, or constraint middleware is removed or bypassed
+- Database-level constraints are disabled or circumvented
+
+---
+
+### 📋 **Integration Points**  
+1. **Database Models:**  
+   - User authentication  
+   - Dataset and upload tracking  
+   - Optimization job registry  
+   - Model versioning and audit
+2. **Environment Configuration:**  
+   ```yaml
+   # configs/environment/mandl.yaml
+   environment:
+     coverage_threshold: 0.7
+     emission_limit: 1000
+   ```
+3. **Constraint Validation:**  
+   ```python
+   # src/environments/mandl_env.py
+   def _is_valid_action(self, action: int) -> bool:
+       if action in self.visited_stops:
+           return False
+       if not self.current_route:
+           return False
+       last_stop = self.current_route[-1]
+       return action in [n for n, _ in self.edges[last_stop]]
+   ```
+4. **Security Middleware:**  
+   ```python
+   # src/core/middleware.py
+   class AuthMiddleware:
+       def __init__(self, app):
+           self.app = app
+       async def __call__(self, scope, receive, send):
+           if scope["type"] == "http":
+               token = scope.get("token")
+               if token:
+                   payload = jwt.decode(token, os.getenv("JWT_SECRET"))
+                   scope["user"] = payload.get("sub")
+           await self.app(scope, receive, send)
+   ```
+
+---
+
+### 📝 **License Enforcement**  
+1. **Dockerfile-based Verification:**  
+   ```dockerfile
+   RUN python -c "from environments.mandl_env import MandlEnv; env = MandlEnv(); print(env._get_current_metrics())"
+   ```
+2. **Database Constraint Validation:**  
+   ```sql
+   SELECT conname, consrc
+   FROM pg_constraint
+   WHERE conrelid = 'datasets'::regclass;
+   -- Should include coverage_threshold
+   ```
+3. **Code Integrity Checks:**  
+   ```bash
+   # File integrity
+   find . -type f -name "*.py" -exec sha256sum {} \; > .checksums.txt
+   sha256sum -c .checksums.txt
+   ```
+
+---
+
+### 📌 **Commercial Use Requirements**  
+For any commercial deployment or SaaS resale:
+- Submit monthly audit and compliance logs to [raafatoel@gmail.com]
+- Maintain all constraint and validation mechanisms
+- Use PostgreSQL (SQLite prohibited in production)
+- Provide feature encoder and compliance scripts for inspection
+
+---
+
+### 🧠 **Ethical AI Provisions**  
+Strictly prohibited:
+- Training, fine-tuning, or deploying on discriminatory or biased datasets
+- Circumventing accessibility or fairness constraints
+- Disabling or omitting demand-serving logic for underserved communities
+
+---
+
+### 📁 **Repository Directory Structure**
+```
+BTDN/
+├── data/
+│   └── raw/
+│       ├── stops.csv
+│       ├── edges.csv
+│       └── demands.csv
+├── configs/
+│   └── environment/
+│       └── mandl.yaml
+├── logs/
+│   └── database/
+├── models/
+│   └── ppo/
+│   └── transformer/
+└── simulations/
+    └── results/
+```
+
+**CSV Format**
+```csv
+# stops.csv
+x,y
+0,0
+1,1
+2,2
+3,3
+# edges.csv
+source,target,weight
+0,1,1.0
+1,2,1.5
+2,3,2.0
+```
+
+---
+
+### ✅ **Validation Checklist**
+| Component           | Command                                                              | Expected Outcome    |
+|---------------------|----------------------------------------------------------------------|---------------------|
+| Database Connection | `psql -U btdn_user -d btdn_db`                                      | Should connect      |
+| Coverage Threshold  | `SELECT * FROM datasets WHERE coverage < 0.7`                       | No results          |
+| Emission Limit      | `SELECT * FROM optimization_jobs WHERE emissions > 1000`            | No results          |
+| Reward Weights      | `curl https://btdn.onrender.com/config/environment`                 | Values within ±50%  |
+| Route Validation    | `curl -X POST "https://btdn.onrender.com/routes/optimize" -d '{"max_route_length": 15}'` | 400 Bad Request     |
+
+---
+
+### 📄 **Legal Provisions**
+- **No Warranty:** Software and Models are provided "as is", without express or implied warranty.
+- **Liability Cap:** Maximum liability limited to $100,000 USD.
+- **Governing Law:** [Jurisdiction of rafatoel, or as mutually agreed in writing]
+- **Dispute Resolution:** Mediation is required before any legal action.
+
+---
+
+### 📬 **Contact & Support**  
+For commercial licensing, compliance, or collaboration:
+- **Email:** [raafatoel@gmail.com]
+- **GitHub:** [@rafatoel](https://github.com/rafatoel)
+- **Project:** [https://github.com/rafatoel/BTDN](https://github.com/rafatoel/BTDN)
+
+---
+
+**© 2023–2025 rafatoel. All rights reserved.**
